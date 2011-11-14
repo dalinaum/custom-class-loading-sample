@@ -81,17 +81,90 @@
             </if>
 
             <echo>Converting compiled files and external libraries into @{output-dex-file}...</echo>
-            <apply executable="${dx}" failonerror="true" parallel="true">
-            	<arg value="--dex" />
-                <arg value="--output=@{output-dex-file}" />
-                <extra-parameters />
-                <arg line="${verbose.option}" />
-                <arg path="@{input-dir}" />
+            <echo>@{input-dir}...</echo>
+            <dex executable="${dx}"
+                    output="@{output-dex-file}"
+                    verbose="${verbose}"
+                    buildType="${build.target}">
+                <path path="@{input-dir}"/>
                 <path refid="out.dex.jar.input.ref" />
                 <external-libs />
-            </apply>
+            </dex>
         </sequential>
     </macrodef>
+
+    <target name="-dex" depends="-compile, -post-compile, -obfuscate"
+            unless="do.not.compile">
+        <if condition="${manifest.hasCode}">
+            <then>
+            	<!-- Create staging directories to store .class files to be converted to the -->
+            	<!-- default dex and the secondary dex. -->
+            	<mkdir dir="${out.classes.absolute.dir}.1"/>
+            	<mkdir dir="${out.classes.absolute.dir}.2"/>
+            	
+            	<!-- Primary dex to include everything but the concrete library implementation. -->
+            	<copy todir="${out.classes.absolute.dir}.1" >
+            		<fileset dir="${out.classes.absolute.dir}" >
+            			<exclude name="com/example/dex/lib/**" />
+            		</fileset>
+            	</copy>
+            	<!-- Secondary dex to include the concrete library implementation. -->
+            	<copy todir="${out.classes.absolute.dir}.2" >
+            		<fileset dir="${out.classes.absolute.dir}" >
+            			<include name="com/example/dex/lib/**" />
+            		</fileset>
+            	</copy>	
+            	
+            	<!-- Compile .class files from the two stage directories to the apppropriate dex files. -->
+            	<dex-helper-mod input-dir="${out.classes.absolute.dir}.1"
+                    output-dex-file="${out.absolute.dir}/${dex.file.name}" />
+            	<mkdir dir="${out.absolute.dir}/secondary_dex_dir" />
+            	<dex-helper-mod input-dir="${out.classes.absolute.dir}.2"
+            		output-dex-file="${out.absolute.dir}/secondary_dex_dir/classes.dex" />
+            	<!-- Jar the secondary dex file so it can be consumed by the DexClassLoader. -->
+            	<!-- Package the output in the assets directory of the apk. -->
+            	<jar destfile="${asset.absolute.dir}/secondary_dex.jar"
+            	     basedir="${out.absolute.dir}/secondary_dex_dir" includes="classes.dex" />      	
+            </then>
+            <else>
+                <echo>hasCode = false. Skipping...</echo>
+            </else>
+        </if>
+    </target>
+
+        <target name="clean" description="Removes output files created by other targets.">
+        <delete dir="${out.absolute.dir}" verbose="${verbose}" />
+        <delete dir="${gen.absolute.dir}" verbose="${verbose}" />
+        <delete dir="${asset.absolute.dir}" verbose="${verbose}" />
+
+        <!-- if we know about a tested project or libraries, we clean them too. This
+             will only work if the target 'all' was called first -->
+        <if condition="${project.is.test}">
+            <then>
+                <property name="tested.project.absolute.dir" location="${tested.project.dir}" />
+                <subant failonerror="true">
+                    <fileset dir="${tested.project.absolute.dir}" includes="build.xml" />
+                    <target name="all" />
+                    <target name="clean" />
+                </subant>
+            </then>
+        </if>
+
+        <if>
+            <condition>
+                <isreference refid="project.libraries" />
+            </condition>
+            <then>
+                <subant
+                        buildpathref="project.libraries"
+                        antfile="build.xml"
+                        failonerror="true">
+                    <target name="all" />
+                    <target name="clean" />
+                </subant>
+            </then>
+        </if>
+    </target>
 
     <!-- Import the actual build file.
 
